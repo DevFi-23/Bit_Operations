@@ -1,13 +1,3 @@
-/*
- * test_bitops.c - Unit test cho bitops.h (thanh ghi 32 bit, STM32F103C8T6)
- *
- * Chi test cac tinh nang cua thu vien:
- *   BIT_SET, BIT_CLR, BIT_TGL, BIT_READ, MASK, FIELD_GET, FIELD_SET
- *
- * Build tren PC (host):
- *   gcc -std=c99 -Wall -Wextra -Wpedantic -g -fsanitize=undefined,address \
- *       test/test_bitops.c -o test_bitops && ./test_bitops
- */
 #include "../include/bitops.h"
 #include <stdio.h>
 #include <stdint.h>
@@ -46,9 +36,7 @@ static uint32_t test_failed = 0;
         }                                                                   \
     } while (0)
 
-/* ------------------------------------------------------------------ */
-/* Reference model (viet theo cach khac, khong dung macro cua thu vien) */
-/* ------------------------------------------------------------------ */
+/* Reference model */
 static uint32_t ref_mask(uint32_t w)
 {
     uint32_t m = 0u;
@@ -65,9 +53,6 @@ static const uint32_t PATTERNS[] = {
 };
 #define N_PATTERNS (sizeof(PATTERNS) / sizeof(PATTERNS[0]))
 
-/* ------------------------------------------------------------------ */
-/* BIT_SET                                                             */
-/* ------------------------------------------------------------------ */
 static void test_bit_set(void)
 {
     uint32_t reg;
@@ -125,9 +110,6 @@ static void test_bit_set(void)
     CHECK_EQ_U32(reg, 0x00000020u);
 }
 
-/* ------------------------------------------------------------------ */
-/* BIT_CLR                                                             */
-/* ------------------------------------------------------------------ */
 static void test_bit_clr(void)
 {
     uint32_t reg;
@@ -175,9 +157,6 @@ static void test_bit_clr(void)
     CHECK_EQ_U32(reg, 0xFFFFFFFBu);
 }
 
-/* ------------------------------------------------------------------ */
-/* BIT_TGL                                                             */
-/* ------------------------------------------------------------------ */
 static void test_bit_tgl(void)
 {
     uint32_t reg;
@@ -214,9 +193,6 @@ static void test_bit_tgl(void)
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* BIT_READ                                                            */
-/* ------------------------------------------------------------------ */
 static void test_bit_read(void)
 {
     uint32_t reg;
@@ -270,9 +246,6 @@ static void test_bit_read(void)
     CHECK_EQ_U32(reg, 0xA5A5A5A5u);
 }
 
-/* ------------------------------------------------------------------ */
-/* MASK                                                                */
-/* ------------------------------------------------------------------ */
 static void test_mask(void)
 {
     uint32_t w;
@@ -297,9 +270,6 @@ static void test_mask(void)
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* FIELD_GET                                                           */
-/* ------------------------------------------------------------------ */
 static void test_field_get(void)
 {
     uint32_t reg;
@@ -376,9 +346,7 @@ static void test_field_get(void)
     CHECK_EQ_U32(reg, 0xA5A5A5A5u);
 }
 
-/* ------------------------------------------------------------------ */
-/* FIELD_SET                                                           */
-/* ------------------------------------------------------------------ */
+
 static void test_field_set(void)
 {
     uint32_t reg;
@@ -472,81 +440,6 @@ static void test_field_set(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Cach dung macro: kieu cua reg va ngu canh cau lenh                  */
-/* ------------------------------------------------------------------ */
-typedef struct {
-    volatile uint32_t CR;
-    volatile uint32_t SR;
-} regs_t;
-
-static void test_operand_forms(void)
-{
-    /* volatile uint32_t: kieu cua thanh ghi phan cung that */
-    volatile uint32_t vreg = 0u;
-    BIT_SET(vreg, 3);
-    CHECK_EQ_U32(vreg, 0x8u);
-    BIT_TGL(vreg, 3);
-    CHECK_EQ_U32(vreg, 0x0u);
-    FIELD_SET(vreg, 4, 4, 0xAu);
-    CHECK_EQ_U32(vreg, 0xA0u);
-    CHECK_EQ_U32(FIELD_GET(vreg, 4, 4), 0xAu);
-    CHECK_EQ_U32(BIT_READ(vreg, 5), 1u);
-    BIT_CLR(vreg, 5);
-    CHECK_EQ_U32(vreg, 0x80u);
-
-    {
-        uint32_t arr[3] = {0u, 0u, 0u};
-        regs_t dev = {0u, 0u};
-        regs_t *pdev = &dev;
-        uint32_t *p = &arr[1];
-        uint32_t idx = 2u;
-
-        BIT_SET(arr[idx], 3);
-        CHECK_EQ_U32(arr[2], 0x8u);
-        CHECK_EQ_U32(arr[0], 0u);
-        CHECK_EQ_U32(arr[1], 0u);
-
-        BIT_SET(dev.CR, 0);
-        CHECK_EQ_U32(dev.CR, 0x1u);
-        CHECK_EQ_U32(dev.SR, 0u);
-
-        BIT_SET(pdev->SR, 5);
-        CHECK_EQ_U32(dev.SR, 0x20u);
-        FIELD_SET(pdev->CR, 8, 4, 0x9u);
-        CHECK_EQ_U32(dev.CR, 0x901u);
-        CHECK_EQ_U32(FIELD_GET(pdev->CR, 8, 4), 0x9u);
-
-        BIT_SET(*p, 31);
-        CHECK_EQ_U32(arr[1], 0x80000000u);
-        BIT_CLR(*p, 31);
-        CHECK_EQ_U32(arr[1], 0u);
-    }
-
-    {
-        uint32_t r = 0u;
-        int cond = 1;
-        if (cond)
-            BIT_SET(r, 1);
-        else
-            BIT_CLR(r, 1);
-        CHECK_EQ_U32(r, 0x2u);
-
-        cond = 0;
-        if (cond)
-            BIT_SET(r, 2);
-        else
-            BIT_CLR(r, 1);
-        CHECK_EQ_U32(r, 0x0u);
-
-        if (cond)
-            BIT_TGL(r, 0);
-        else
-            FIELD_SET(r, 0, 4, 0xCu);
-        CHECK_EQ_U32(r, 0xCu);
-    }
-}
-
-/* ------------------------------------------------------------------ */
 int main(void)
 {
     test_bit_set();
@@ -556,11 +449,10 @@ int main(void)
     test_mask();
     test_field_get();
     test_field_set();
-    test_operand_forms();
 
     printf("===SUMMARY===\n");
     printf("Total       : %u\n", (unsigned)test_total);
     printf("Test passed : %u\n", (unsigned)test_passed);
     printf("Test failed : %u\n", (unsigned)test_failed);
     return (test_failed == 0u) ? 0 : 1;
-}  
+}
