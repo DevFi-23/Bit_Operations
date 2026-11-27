@@ -21,6 +21,7 @@ It gives you safe, readable replacements for the hand-written `|=`, `&= ~`, `^=`
 - C99, no compiler extensions.
 - Out-of-range arguments are rejected instead of invoking undefined behaviour.
 - Covered by an exhaustive host-side unit test suite (over 17,000 assertions).
+- Verified on real hardware: an STM32CubeIDE project blinks the PC13 LED on an STM32F103C8T6 using only these macros (see [On-board test](#on-board-test-stm32f103c8t6)).
 
 ### Table of contents
 
@@ -32,6 +33,7 @@ It gives you safe, readable replacements for the hand-written `|=`, `&= ~`, `^=`
 - [Limitations](#limitations)
 - [Project structure](#project-structure)
 - [Building and running the tests](#building-and-running-the-tests)
+- [On-board test (STM32F103C8T6)](#on-board-test-stm32f103c8t6)
 - [Test strategy](#test-strategy)
 
 ### Quick start
@@ -100,11 +102,10 @@ The examples below use the raw register layout of the STM32F103 (the "Blue Pill"
 BIT_SET(RCC->APB2ENR, 4);
 ```
 
-**Configure PC13 as a 2 MHz push-pull output.** `GPIOC->CRH` holds `CNF13[1:0]` in bits 23:22 and `MODE13[1:0]` in bits 21:20. Reset value is `0x44444444`:
+**Configure PC13 as a 2 MHz push-pull output.** `GPIOC->CRH` holds `CNF13[1:0]` in bits 23:22 and `MODE13[1:0]` in bits 21:20, so the whole 4-bit configuration sits in bits 23:20. Reset value is `0x44444444`:
 
 ```c
-FIELD_SET(GPIOC->CRH, 20, 2, 2u);   /* MODE13 = 0b10 (output, 2 MHz) */
-FIELD_SET(GPIOC->CRH, 22, 2, 0u);   /* CNF13  = 0b00 (push-pull)     */
+FIELD_SET(GPIOC->CRH, 20, 4, 0x2u);   /* CNF13 = 0b00 (push-pull), MODE13 = 0b10 (output, 2 MHz) */
 /* GPIOC->CRH == 0x44244444 */
 ```
 
@@ -140,17 +141,28 @@ uint32_t pllmul = FIELD_GET(RCC->CFGR, 18, 4);
 - **`MASK(w)` with `w > 32` returns a full mask,** whereas `FIELD_GET` / `FIELD_SET` treat `w > 32` as invalid.
 - **Signed `pos` / `w` arguments can trigger `-Wsign-compare`** in the macro's range check. Pass unsigned values or constants to keep builds warning-free.
 - **`MASK` is a short, generic name** and can collide with macros from vendor headers. If a clash occurs in your project, rename it (for example to `BITOPS_MASK`) in `bitops.h`.
+- **Not atomic.** `BIT_SET`, `BIT_CLR`, `BIT_TGL` and `FIELD_SET` are read-modify-write sequences. If the same register is also modified from an interrupt handler, protect the access (disable interrupts) or use the hardware's atomic registers (for example `GPIOx->BSRR`).
 
 ### Project structure
 
 ```
 .
 ├── include/
-│   └── bitops.h          # the library (header-only)
+│   └── bitops.h                  # the library (header-only)
 ├── test/
-│   └── test_bitops.c     # unit tests
+│   └── test_bitops.c             # host-side unit tests
+├── bitops_test_onboard/          # STM32CubeIDE project (STM32F103C8T6, LED blink on PC13)
+│   ├── Core/
+│   │   ├── Inc/bitops.h          # copy of include/bitops.h
+│   │   └── Src/main.c            # on-board test code
+│   ├── Drivers/                  # STM32Cube HAL + CMSIS (generated)
+│   ├── bitops_test_onboard.ioc   # STM32CubeMX configuration
+│   └── STM32F103C8TX_FLASH.ld    # linker script
+├── .gitignore
 └── README.md
 ```
+
+`bitops_test_onboard/Core/Inc/bitops.h` is a copy of `include/bitops.h`. When you change the library, copy it again so the two files stay identical.
 
 ### Building and running the tests
 
@@ -172,6 +184,28 @@ Test failed : 0
 ```
 
 The program exits with status `0` when every test passes and `1` otherwise, so it can be used directly in a CI job or a Makefile target. On failure, each failing assertion prints its file, line, the expression and, for value comparisons, the actual and expected values.
+
+### On-board test (STM32F103C8T6)
+
+The `bitops_test_onboard/` folder is an STM32CubeIDE project (STM32Cube FW_F1 V1.8.7, HAL) that uses the library to drive the on-board LED of a "Blue Pill" (STM32F103C8T6, LED on PC13). It confirms that the macros work on the real Cortex-M3 and on volatile peripheral registers, not only on host variables.
+
+- **Clock:** internal HSI, 8 MHz, no PLL; `HAL_Delay()` uses SysTick.
+- **Code under test** (`bitops_test_onboard/Core/Src/main.c`):
+
+```c
+BIT_SET(RCC->APB2ENR, 4u);              /* enable GPIOC clock (IOPCEN) */
+(void)RCC->APB2ENR;                     /* dummy read: wait for the clock to start */
+FIELD_SET(GPIOC->CRH, 20u, 4u, 0x2u);   /* PC13: push-pull output, 2 MHz */
+BIT_SET(GPIOC->ODR, 13u);               /* LED off at start (PC13 is active low) */
+
+while (1) {
+    BIT_TGL(GPIOC->ODR, 13u);           /* toggle LED */
+    HAL_Delay(500);                     /* 500 ms */
+}
+```
+
+- **Result:** the project builds with 0 errors and 0 warnings (`arm-none-eabi-gcc`, `-Wall`), and when flashed to the board the LED on PC13 blinks every 500 ms, so `BIT_SET`, `BIT_TGL` and `FIELD_SET` behave correctly on hardware. `BIT_CLR`, `BIT_READ` and `FIELD_GET` are covered by the host-side tests only.
+- **To run it:** open `bitops_test_onboard/` in STM32CubeIDE (File → Open Projects from File System), build, and run or debug on the board through an ST-Link.
 
 ### Test strategy
 
@@ -201,6 +235,7 @@ Thư viện thay thế các biểu thức `|=`, `&= ~`, `^=` và shift-and-mask 
 - Chuẩn C99, không dùng mở rộng của compiler.
 - Tham số ngoài dải bị từ chối thay vì gây ra hành vi không xác định.
 - Được phủ bởi bộ unit test chạy trên host, kiểm tra vét cạn (hơn 17.000 phép kiểm tra).
+- Đã kiểm chứng trên phần cứng thật: một project STM32CubeIDE nháy LED PC13 trên STM32F103C8T6 chỉ bằng các macro này (xem [Test on board](#test-on-board-stm32f103c8t6)).
 
 ### Mục lục
 
@@ -212,6 +247,7 @@ Thư viện thay thế các biểu thức `|=`, `&= ~`, `^=` và shift-and-mask 
 - [Hạn chế](#hạn-chế)
 - [Cấu trúc project](#cấu-trúc-project)
 - [Build và chạy test](#build-và-chạy-test)
+- [Test on board (STM32F103C8T6)](#test-on-board-stm32f103c8t6)
 - [Chiến lược kiểm thử](#chiến-lược-kiểm-thử)
 
 ### Bắt đầu nhanh
@@ -280,11 +316,10 @@ Các ví dụ dưới đây dùng bố cục thanh ghi gốc của STM32F103 (LE
 BIT_SET(RCC->APB2ENR, 4);
 ```
 
-**Cấu hình PC13 làm output push-pull 2 MHz.** `GPIOC->CRH` chứa `CNF13[1:0]` ở bit 23:22 và `MODE13[1:0]` ở bit 21:20. Giá trị reset là `0x44444444`:
+**Cấu hình PC13 làm output push-pull 2 MHz.** `GPIOC->CRH` chứa `CNF13[1:0]` ở bit 23:22 và `MODE13[1:0]` ở bit 21:20, nên toàn bộ cấu hình 4 bit nằm ở bit 23:20. Giá trị reset là `0x44444444`:
 
 ```c
-FIELD_SET(GPIOC->CRH, 20, 2, 2u);   /* MODE13 = 0b10 (output, 2 MHz) */
-FIELD_SET(GPIOC->CRH, 22, 2, 0u);   /* CNF13  = 0b00 (push-pull)     */
+FIELD_SET(GPIOC->CRH, 20, 4, 0x2u);   /* CNF13 = 0b00 (push-pull), MODE13 = 0b10 (output, 2 MHz) */
 /* GPIOC->CRH == 0x44244444 */
 ```
 
@@ -320,17 +355,28 @@ uint32_t pllmul = FIELD_GET(RCC->CFGR, 18, 4);
 - **`MASK(w)` với `w > 32` trả về mask đầy đủ,** trong khi `FIELD_GET` / `FIELD_SET` coi `w > 32` là không hợp lệ.
 - **Tham số `pos` / `w` có dấu có thể gây cảnh báo `-Wsign-compare`** trong phép kiểm tra dải của macro. Hãy truyền giá trị không dấu hoặc hằng số để build không có cảnh báo.
 - **`MASK` là tên ngắn và chung chung,** có thể trùng với macro trong header của vendor. Nếu xảy ra xung đột trong project của bạn, hãy đổi tên nó (ví dụ thành `BITOPS_MASK`) trong `bitops.h`.
+- **Không atomic.** `BIT_SET`, `BIT_CLR`, `BIT_TGL` và `FIELD_SET` là chuỗi read-modify-write. Nếu cùng một thanh ghi cũng bị sửa trong trình phục vụ ngắt, hãy bảo vệ truy cập (tắt ngắt) hoặc dùng thanh ghi atomic của phần cứng (ví dụ `GPIOx->BSRR`).
 
 ### Cấu trúc project
 
 ```
 .
 ├── include/
-│   └── bitops.h          # thư viện (header-only)
+│   └── bitops.h                  # thư viện (header-only)
 ├── test/
-│   └── test_bitops.c     # unit test
+│   └── test_bitops.c             # unit test chạy trên host
+├── bitops_test_onboard/          # project STM32CubeIDE (STM32F103C8T6, nháy LED PC13)
+│   ├── Core/
+│   │   ├── Inc/bitops.h          # bản sao của include/bitops.h
+│   │   └── Src/main.c            # code test on board
+│   ├── Drivers/                  # STM32Cube HAL + CMSIS (sinh tự động)
+│   ├── bitops_test_onboard.ioc   # cấu hình STM32CubeMX
+│   └── STM32F103C8TX_FLASH.ld    # linker script
+├── .gitignore
 └── README.md
 ```
+
+`bitops_test_onboard/Core/Inc/bitops.h` là bản sao của `include/bitops.h`. Khi sửa thư viện, hãy chép lại để hai file luôn giống hệt nhau.
 
 ### Build và chạy test
 
@@ -352,6 +398,28 @@ Test failed : 0
 ```
 
 Chương trình thoát với mã `0` khi mọi test đều pass và `1` trong trường hợp ngược lại, nên có thể dùng trực tiếp trong CI hoặc target của Makefile. Khi có lỗi, mỗi phép kiểm tra thất bại sẽ in ra file, dòng, biểu thức và, với phép so sánh giá trị, cả giá trị thực tế lẫn giá trị mong đợi.
+
+### Test on board (STM32F103C8T6)
+
+Thư mục `bitops_test_onboard/` là project STM32CubeIDE (STM32Cube FW_F1 V1.8.7, HAL) dùng thư viện để điều khiển LED trên board "Blue Pill" (STM32F103C8T6, LED ở PC13). Nó xác nhận các macro chạy đúng trên Cortex-M3 thật và trên thanh ghi ngoại vi kiểu volatile, không chỉ trên biến ở máy host.
+
+- **Clock:** HSI nội 8 MHz, không dùng PLL; `HAL_Delay()` dùng SysTick.
+- **Code được kiểm thử** (`bitops_test_onboard/Core/Src/main.c`):
+
+```c
+BIT_SET(RCC->APB2ENR, 4u);              /* bật clock GPIOC (IOPCEN) */
+(void)RCC->APB2ENR;                     /* đọc giả: chờ clock chạy ổn định */
+FIELD_SET(GPIOC->CRH, 20u, 4u, 0x2u);   /* PC13: output push-pull, 2 MHz */
+BIT_SET(GPIOC->ODR, 13u);               /* LED tắt lúc đầu (PC13 tích cực mức thấp) */
+
+while (1) {
+    BIT_TGL(GPIOC->ODR, 13u);           /* đảo LED */
+    HAL_Delay(500);                     /* 500 ms */
+}
+```
+
+- **Kết quả:** project build 0 lỗi, 0 cảnh báo (`arm-none-eabi-gcc`, `-Wall`), và khi nạp xuống board thì LED PC13 nháy mỗi 500 ms, nên `BIT_SET`, `BIT_TGL` và `FIELD_SET` hoạt động đúng trên phần cứng. `BIT_CLR`, `BIT_READ` và `FIELD_GET` mới chỉ được phủ bởi test trên host.
+- **Cách chạy:** mở `bitops_test_onboard/` trong STM32CubeIDE (File → Open Projects from File System), build rồi chạy hoặc debug trên board qua ST-Link.
 
 ### Chiến lược kiểm thử
 

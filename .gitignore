@@ -1,3 +1,23 @@
 # Build artifacts
 *.exe
 *.o
+
+# STM32CubeIDE build output and generated files
+Debug/
+Release/
+*.elf
+*.map
+*.list
+*.d
+*.su
+*.cyclo
+*.bin
+*.hex
+
+# STM32CubeIDE / Eclipse workspace data (contains logs and browser cache, cookies, saved logins)
+.metadata/
+**/.metadata/
+.settings/
+
+# Launch configs hold absolute paths of this machine
+*.launch
